@@ -213,6 +213,7 @@ class Boid {
     this.size = CONFIG.BOID_SIZE;
     this.maxSpeed = CONFIG.BOID_SPEED;
     this.maxForce = CONFIG.BOID_FORCE;
+    this.wpIndex = 0; // which waypoint this boid is heading to
   }
   get speed() { return Math.sqrt(this.vx*this.vx+this.vy*this.vy); }
   distTo(other) { const dx=other.x-this.x, dy=other.y-this.y; return Math.sqrt(dx*dx+dy*dy); }
@@ -300,18 +301,18 @@ spawnBoids(CONFIG.INITIAL_BOID_COUNT);
 // ─── Steering Behaviors ───
 function waypointSteer(boid) {
   if (!waypointWeight || !waypoints.length) return [0,0];
-  // find nearest waypoint
-  let nearest=null, nearDist=Infinity;
-  for (const wp of waypoints) {
-    const dx=wp.x-boid.x, dy=wp.y-boid.y, d=Math.sqrt(dx*dx+dy*dy);
-    if (d<nearDist) { nearDist=d; nearest=wp; }
+  // find which waypoint this boid is heading to
+  const idx = boid.wpIndex % waypoints.length;
+  const wp = waypoints[idx];
+  const dx = wp.x-boid.x, dy = wp.y-boid.y, d = Math.sqrt(dx*dx+dy*dy);
+  // reached waypoint → advance to next
+  if (d < 15) {
+    boid.wpIndex = (boid.wpIndex + 1) % waypoints.length;
+    return [0,0];
   }
-  if (!nearest) return [0,0];
-  const dx=nearest.x-boid.x, dy=nearest.y-boid.y, d=Math.sqrt(dx*dx+dy*dy);
-  if (d<10) return [0,0];
   // steer toward it
-  const fx=dx/d*boid.maxSpeed*0.7-boid.vx;
-  const fy=dy/d*boid.maxSpeed*0.7-boid.vy;
+  const fx = dx/d*boid.maxSpeed*0.7 - boid.vx;
+  const fy = dy/d*boid.maxSpeed*0.7 - boid.vy;
   return [fx, fy];
 }
 function cohesion(boid) {
@@ -389,12 +390,16 @@ function render() {
     ctx.beginPath(); ctx.arc(star.x,star.y,star.r,0,Math.PI*2); ctx.fill(); ctx.restore();
   }
   // Waypoints
-  for (const wp of waypoints) {
+  for (let i=0;i<waypoints.length;i++) {
+    const wp=waypoints[i];
     ctx.save();
     ctx.fillStyle='#ffcc44';
-    ctx.beginPath(); ctx.arc(wp.x,wp.y,4,0,Math.PI*2); ctx.fill();
-    ctx.strokeStyle='rgba(255,204,68,0.2)'; ctx.lineWidth=1;
-    ctx.beginPath(); ctx.arc(wp.x,wp.y,10,0,Math.PI*2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(wp.x,wp.y,6,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle='rgba(255,204,68,0.25)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.arc(wp.x,wp.y,12,0,Math.PI*2); ctx.stroke();
+    // number
+    ctx.fillStyle='#0f0f1a'; ctx.font='bold 8px monospace'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(i+1, wp.x, wp.y+0.5);
     ctx.restore();
   }
   if (waypoints.length>1) {
@@ -456,7 +461,7 @@ s('separationSlider').addEventListener('input', e => { separationWeight=parseFlo
 s('alignmentSlider').addEventListener('input', e => { alignmentWeight=parseFloat(e.target.value)/100; s('alignmentVal').textContent=alignmentWeight.toFixed(2); });
 s('avoidSlider').addEventListener('input', e => { avoidWeight=parseFloat(e.target.value)/100; s('avoidVal').textContent=avoidWeight.toFixed(2); });
 s('waypointSlider').addEventListener('input', e => { waypointWeight=parseFloat(e.target.value)/100; s('waypointVal').textContent=waypointWeight.toFixed(1); });
-s('resetBtn').addEventListener('click', ()=>{ boids=[]; obstacles=[]; spawnBoids(CONFIG.INITIAL_BOID_COUNT); });
+s('resetBtn').addEventListener('click', ()=>{ boids=[]; obstacles=[]; spawnBoids(CONFIG.INITIAL_BOID_COUNT); boids.forEach(b=>b.wpIndex=0); });
 s('clearObstaclesBtn').addEventListener('click', ()=>{ obstacles=[]; });
 s('addBoidBtn').addEventListener('click', ()=>{ if(boids.length<CONFIG.MAX_BOIDS) spawnBoids(1); });
 s('removeBoidBtn').addEventListener('click', ()=>{ if(boids.length>CONFIG.MIN_BOIDS) boids.pop(); });
@@ -465,7 +470,7 @@ window.addEventListener('keydown', e => {
   if (e.code==='KeyN') showNeighbors=!showNeighbors;
   if (e.code==='KeyT') boidTrails=!boidTrails;
   if (e.code==='KeyW') { isWaypointMode=!isWaypointMode; canvas.style.cursor=isWaypointMode?'cell':'crosshair'; }
-  if (e.code==='KeyX') { waypoints=[]; }
+  if (e.code==='KeyX') { waypoints=[]; boids.forEach(b=>b.wpIndex=0); }
 });
 
 // ─── Canvas Input ───
