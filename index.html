@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Waypoint + Flocking AI Demo</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#050810;color:#c8cce0;font-family:'Segoe UI',system-ui,sans-serif;overflow:hidden;height:100vh;display:flex;flex-direction:column}
+canvas{flex:1;display:block}
+#ui{position:fixed;top:12px;left:12px;background:rgba(5,8,16,.92);border:1px solid rgba(100,140,255,.15);border-radius:10px;padding:14px 18px;backdrop-filter:blur(8px);z-index:10;min-width:260px}
+#ui h3{color:#6ef0ff;font-size:13px;margin-bottom:10px;font-weight:600;letter-spacing:.5px}
+.ctrl{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;font-size:11px}
+.ctrl label{color:#7a82a8;width:90px}
+.ctrl input[type=range]{flex:1;margin:0 8px;accent-color:#6ef0ff;height:4px}
+.ctrl .val{color:#6ef0ff;min-width:36px;text-align:right;font-size:10px}
+.btn-row{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+button{background:rgba(100,140,255,.12);border:1px solid rgba(100,140,255,.25);color:#c8cce0;padding:5px 12px;border-radius:6px;font-size:11px;cursor:pointer;transition:all .15s}
+button:hover{background:rgba(100,140,255,.25);color:#fff}
+button.active{background:rgba(110,240,255,.2);border-color:#6ef0ff;color:#6ef0ff}
+.legend{margin-top:12px;font-size:10px;color:#5a6280;line-height:1.6}
+.legend span{display:inline-block;margin-right:10px}
+.legend .dot{display:inline-block;width:8px;height:8px;border-radius:50%;vertical-align:middle;margin-right:3px}
+#info{position:fixed;bottom:12px;left:12px;font-size:10px;color:#3a4260;font-family:monospace}
+</style>
+</head>
+<body>
+
+<canvas id="c"></canvas>
+
+<div id="ui">
+  <h3>⬡ WAYPOINT + FLOCKING AI</h3>
+  <div class="ctrl"><label>Flock Size</label><input type="range" id="sFlock" min="2" max="200" value="60"><span class="val" id="vFlock">60</span></div>
+  <div class="ctrl"><label>Speed</label><input type="range" id="sSpeed" min="1" max="8" value="3"><span class="val" id="vSpeed">3</span></div>
+  <div class="ctrl"><label>Separation</label><input type="range" id="sSep" min="0" max="100" value="40"><span class="val" id="vSep">40</span></div>
+  <div class="ctrl"><label>Alignment</label><input type="range" id="sAli" min="0" max="100" value="30"><span class="val" id="vAli">30</span></div>
+  <div class="ctrl"><label>Cohesion</label><input type="range" id="sCoh" min="0" max="100" value="25"><span class="val" id="vCoh">25</span></div>
+  <div class="ctrl"><label>WP Influence</label><input type="range" id="sWP" min="0" max="100" value="50"><span class="val" id="vWP">50</span></div>
+  <div class="btn-row">
+    <button id="btnGrid" class="active" onclick="setPattern('grid')">Grid Patrol</button>
+    <button id="btnSpiral" onclick="setPattern('spiral')">Spiral</button>
+    <button id="btnChase" onclick="setPattern('chase')">Chase Leader</button>
+    <button id="btnWall" onclick="setPattern('wall')">Wall Flow</button>
+    <button onclick="resetFlock()">↻ Reset</button>
+  </div>
+  <div class="legend">
+    <span><span class="dot" style="background:#ff6666"></span>Separation</span>
+    <span><span class="dot" style="background:#66ff66"></span>Alignment</span>
+    <span><span class="dot" style="background:#6699ff"></span>Cohesion</span>
+    <span><span class="dot" style="background:#ffcc44"></span>Waypoint</span>
+  </div>
+</div>
+
+<div id="info">Click canvas → place waypoint | FPS: --</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let W, H;
+function resize() { W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; }
+resize(); window.addEventListener('resize', resize);
+
+const cfg = {
+  flockSize: 60, speed: 3, separation: 40, alignment: 30,
+  cohesion: 25, wpInfluence: 50, visualRange: 80, separationRadius: 25,
+};
+
+const binds = [
+  ['sFlock','vFlock','flockSize'], ['sSpeed','vSpeed','speed'],
+  ['sSep','vSep','separation'], ['sAli','vAli','alignment'],
+  ['sCoh','vCoh','cohesion'], ['sWP','vWP','wpInfluence'],
+];
+binds.forEach(([src,dst,prop]) => {
+  document.getElementById(src).addEventListener('input', e => {
+    cfg[prop] = +e.target.value;
+    document.getElementById(dst).textContent = cfg[prop];
+  });
+});
+
+class Flocker {
+  constructor(x, y, group) {
+    this.x = x; this.y = y;
+    this.vx = (Math.random() - .5) * 2;
+    this.vy = (Math.random() - .5) * 2;
+    this.group = group;
+    this.trail = [];
+    this.trailMax = 8;
+  }
+  update(boids, waypoints, targetWP) {
+    const s = this.separate(boids);
+    const a = this.align(boids);
+    const c = this.cohere(boids);
+    const w = this.followWP(waypoints, targetWP);
+    
+    s.x *= cfg.separation / 100;
+    s.y *= cfg.separation / 100;
+    a.x *= cfg.alignment / 100;
+    a.y *= cfg.alignment / 100;
+    c.x *= cfg.cohesion / 100;
+    c.y *= cfg.cohesion / 100;
+    w.x *= cfg.wpInfluence / 100;
+    w.y *= cfg.wpInfluence / 100;
+    
+    this.vx += s.x + a.x + c.x + w.x;
+    this.vy += s.y + a.y + c.y + w.y;
+    
+    const speed = cfg.speed;
+    const mag = Math.sqrt(this.vx*this.vx + this.vy*this.vy);
+    if (mag > speed) {
+      this.vx = (this.vx/mag) * speed;
+      this.vy = (this.vy/mag) * speed;
+    }
+    if (mag < speed * 0.3) {
+      this.vx = (this.vx/mag) * speed * 0.3;
+      this.vy = (this.vy/mag) * speed * 0.3;
+    }
+    
+    this.x += this.vx;
+    this.y += this.vy;
+    
+    if (this.x < -20) this.x = W + 20;
+    if (this.x > W + 20) this.x = -20;
+    if (this.y < -20) this.y = H + 20;
+    if (this.y > H + 20) this.y = -20;
+    
+    this.trail.push({x: this.x, y: this.y});
+    if (this.trail.length > this.trailMax) this.trail.shift();
+  }
+  separate(boids) { return this._force(boids, 'sep'); }
+  align(boids) { return this._force(boids, 'ali'); }
+  cohere(boids) { return this._force(boids, 'coh'); }
+  
+  _force(boids, mode) {
+    let fx=0, fy=0, count=0;
+    for (const b of boids) {
+      if (b === this) continue;
+      const dx = b.x - this.x, dy = b.y - this.y;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      if (dist > cfg.visualRange) continue;
+      
+      if (mode === 'sep' && dist < cfg.separationRadius) {
+        fx -= (dx/dist) * (1 - dist/cfg.separationRadius);
+        fy -= (dy/dist) * (1 - dist/cfg.separationRadius);
+      }
+      if ((mode === 'ali' || mode === 'coh') && dist > 0) {
+        if (mode === 'ali') { fx += b.vx; fy += b.vy; }
+        if (mode === 'coh') { fx += b.x; fy += b.y; }
+        count++;
+      }
+    }
+    if (count > 0) { fx /= count; fy /= count; }
+    return {x: fx, y: fy};
+  }
+  
+  followWP(waypoints, target) {
+    if (!target || waypoints.length === 0) return {x:0, y:0};
+    let fx=0, fy=0;
+    for (const wp of waypoints) {
+      const dx = wp.x - this.x, dy = wp.y - this.y;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      if (dist < 15) continue;
+      fx += (dx / dist) / dist * 5;
+      fy += (dy / dist) / dist * 5;
+    }
+    const tdx = target.x - this.x, tdy = target.y - this.y;
+    const tdist = Math.sqrt(tdx*tdx + tdy*tdy);
+    if (tdist > 5) {
+      fx += (tdx / tdist) * 1.5;
+      fy += (tdy / tdist) * 1.5;
+    }
+    return {x: fx, y: fy};
+  }
+  
+  draw(ctx) {
+    const cols = ['#ff6666','#66ff66','#6699ff'];
+    ctx.strokeStyle = cols[this.group % 3] + '33';
+    ctx.lineWidth = 1;
+    if (this.trail.length > 1) {
+      ctx.beginPath();
+      ctx.moveTo(this.trail[0].x, this.trail[0].y);
+      for (let i=1;i<this.trail.length;i++) ctx.lineTo(this.trail[i].x, this.trail[i].y);
+      ctx.stroke();
+    }
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    const angle = Math.atan2(this.vy, this.vx);
+    ctx.rotate(angle);
+    ctx.fillStyle = cols[this.group % 3];
+    ctx.beginPath();
+    ctx.moveTo(5, 0);
+    ctx.lineTo(-3, -3);
+    ctx.lineTo(-3, 3);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+const groups = [];
+const flockers = [];
+function spawnFlock(x, y) {
+  const g = groups.length;
+  for (let i=0;i<20;i++) flockers.push(new Flocker(x+(Math.random()-0.5)*40, y+(Math.random()-0.5)*40, g));
+  groups.push({x, y, count: 20});
+}
+spawnFlock(W*.3, H*.4);
+spawnFlock(W*.65, H*.5);
+
+let waypoints = [];
+let targetWP = null;
+const wpPattern = 'grid';
+let wpAnim = 0;
+
+function getWaypoints() {
+  const wps = [];
+  switch(wpPattern) {
+    case 'grid':
+      for (let x=120;x<W-80;x+=100)
+        for (let y=120;y<H-80;y+=100)
+          wps.push({x: x+Math.sin(wpAnim+x*.01)*8, y: y+Math.cos(wpAnim+y*.01)*8});
+      break;
+    case 'spiral':
+      for (let i=0;i<80;i++) {
+        const a = i * .25, r = i * 2.5;
+        wps.push({x: W/2+Math.cos(a)*r, y: H/2+Math.sin(a)*r});
+      }
+      break;
+    case 'chase':
+      wps.push({x: W/2+Math.sin(wpAnim*.7)*W*.3, y: H/2+Math.cos(wpAnim*.5)*H*.3});
+      wps.push({x: W/2-Math.cos(wpAnim*.7)*W*.3, y: H/2+Math.sin(wpAnim*.5)*H*.3});
+      break;
+    case 'wall':
+      for (let i=0;i<12;i++)
+        wps.push({x: W*.1 + (W*.8/11)*i, y: H*.1 + Math.sin(wpAnim + i)*20});
+      break;
+  }
+  return wps;
+}
+
+function setPattern(p) {
+  wpPattern = p;
+  document.querySelectorAll('.btn-row button').forEach(b => b.classList.remove('active'));
+  const btns = {grid:'btnGrid',spiral:'btnSpiral',chase:'btnChase',wall:'btnWall'};
+  if (btns[p]) document.getElementById(btns[p]).classList.add('active');
+}
+
+function resetFlock() {
+  flockers.length = 0; groups.length = 0;
+  waypoints = [];
+  wpAnim = 0;
+  spawnFlock(W*.3, H*.4);
+  spawnFlock(W*.65, H*.5);
+}
+
+canvas.addEventListener('click', e => {
+  const wp = {x: e.clientX, y: e.clientY, age: 0};
+  waypoints.push(wp);
+  targetWP = wp;
+  if (waypoints.length > 50) waypoints.shift();
+});
+
+let fps = 0, frames = 0, fpsTime = 0;
+let lastTime = 0;
+
+function loop(time) {
+  requestAnimationFrame(loop);
+  const dt = Math.min(time - lastTime, 33);
+  lastTime = time;
+  
+  wpAnim += dt * .001;
+  
+  frames++;
+  if (time - fpsTime >= 1000) { fps = frames; frames = 0; fpsTime = time; }
+  
+  ctx.fillStyle = '#050810';
+  ctx.fillRect(0,0,W,H);
+  
+  ctx.fillStyle = '#ffffff08';
+  for (let i=0;i<60;i++) {
+    const sx = (i*137.5+wpAnim*2) % W;
+    const sy = (i*251.3) % H;
+    ctx.fillRect(sx, sy, 1, 1);
+  }
+  
+  const activeWps = getWaypoints();
+  
+  ctx.fillStyle = '#ffcc44';
+  activeWps.forEach(wp => {
+    ctx.beginPath();
+    ctx.arc(wp.x, wp.y, 3, 0, Math.PI*2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,204,68,.15)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(wp.x, wp.y, 12, 0, Math.PI*2);
+    ctx.stroke();
+  });
+  
+  if (activeWps.length > 1) {
+    ctx.strokeStyle = 'rgba(255,204,68,.08)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(activeWps[0].x, activeWps[0].y);
+    for (let i=1;i<activeWps.length;i++) ctx.lineTo(activeWps[i].x, activeWps[i].y);
+    if (wpPattern === 'chase') ctx.lineTo(activeWps[0].x, activeWps[0].y);
+    ctx.stroke();
+  }
+  
+  if (targetWP) {
+    ctx.strokeStyle = 'rgba(255,204,68,.4)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(targetWP.x, targetWP.y, 18 + Math.sin(wpAnim*3)*3, 0, Math.PI*2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(targetWP.x-22, targetWP.y); ctx.lineTo(targetWP.x+22, targetWP.y);
+    ctx.moveTo(targetWP.x, targetWP.y-22); ctx.lineTo(targetWP.x, targetWP.y+22);
+    ctx.stroke();
+  }
+  
+  waypoints.forEach(wp => {
+    wp.age++;
+    const alpha = Math.max(0, .5 - wp.age*.003);
+    ctx.fillStyle = `rgba(255,204,68,${alpha})`;
+    ctx.beginPath();
+    ctx.arc(wp.x, wp.y, 5, 0, Math.PI*2);
+    ctx.fill();
+    ctx.strokeStyle = `rgba(255,204,68,${alpha*.3})`;
+    ctx.beginPath();
+    ctx.arc(wp.x, wp.y, 15, 0, Math.PI*2);
+    ctx.stroke();
+  });
+  
+  for (const f of flockers) {
+    f.update(flockers, activeWps, targetWP);
+    f.draw(ctx);
+  }
+  
+  if (flockers.length <= 40) {
+    const sample = flockers[0];
+    const s = sample.separate(flockers);
+    const a = sample.align(flockers);
+    const c = sample.cohere(flockers);
+    
+    const showForce = (vx, vy, color) => {
+      const len = Math.sqrt(vx*vx+vy*vy)*5;
+      if (len > 1) {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(sample.x, sample.y);
+        ctx.lineTo(sample.x+vx*5, sample.y+vy*5);
+        ctx.stroke();
+      }
+    };
+    showForce(s.x, s.y, '#ff6666');
+    showForce(a.x, a.y, '#66ff66');
+    showForce(c.x, c.y, '#6699ff');
+  }
+  
+  document.getElementById('info').textContent = `Flockers: ${flockers.length} | FPS: ${fps} | Waypoints: ${waypoints.length} | Pattern: ${wpPattern.toUpperCase()}`;
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
