@@ -92,6 +92,9 @@
     .controls-bar .avo input[type="range"] { background: rgba(167,139,250,0.3); }
     .controls-bar .avo input[type="range"]::-webkit-slider-thumb { background: #a78bfa; border-color: #8b6ff0; }
     .controls-bar .avo .val { color: #a78bfa; }
+    .controls-bar .wp input[type="range"] { background: rgba(255,204,68,0.3); }
+    .controls-bar .wp input[type="range"]::-webkit-slider-thumb { background: #ffcc44; border-color: #e0b030; }
+    .controls-bar .wp .val { color: #ffcc44; }
     .controls-bar .btn-group { display: flex; gap: 8px; }
     .controls-bar button {
       background: rgba(255,255,255,0.08);
@@ -149,6 +152,11 @@
       <input type="range" id="avoidSlider" min="0" max="500" value="250">
       <span class="val" id="avoidVal">2.50</span>
     </div>
+    <div class="slider-group wp">
+      <label>WPT</label>
+      <input type="range" id="waypointSlider" min="0" max="300" value="0">
+      <span class="val" id="waypointVal">0</span>
+    </div>
     <div class="btn-group">
       <button id="resetBtn" class="primary">↻ Reset Boids</button>
       <button id="clearObstaclesBtn">✕ Clear Obstacles</button>
@@ -157,7 +165,7 @@
     </div>
   </div>
 
-  <div class="hint" id="hint">Left-click on canvas to place an obstacle · Right-click to remove nearest</div>
+  <div class="hint" id="hint">Left-click:obstacle · Right-click:remove · W:waypoint mode · X:clear waypoints</div>
 
 <script>
 // =====================================================
@@ -273,6 +281,9 @@ let cohesionWeight = CONFIG.COHESION_WEIGHT;
 let separationWeight = CONFIG.SEPARATION_WEIGHT;
 let alignmentWeight = CONFIG.ALIGNMENT_WEIGHT;
 let avoidWeight = CONFIG.OBSTACLE_AVOID_WEIGHT;
+let waypoints = [];
+let waypointWeight = 0;
+let isWaypointMode = false;
 
 // FPS tracking
 let fps = 0, frameCount = 0, fpsTimer = 0;
@@ -287,6 +298,16 @@ function spawnBoids(count) {
 spawnBoids(CONFIG.INITIAL_BOID_COUNT);
 
 // ─── Steering Behaviors ───
+function waypointSteer(boid) {
+  if (!waypointWeight) return [0,0];
+  let fx=0,fy=0,count=0;
+  for (const wp of waypoints) {
+    const dx=wp.x-boid.x, dy=wp.y-boid.y, d=Math.sqrt(dx*dx+dy*dy);
+    if (d>0 && d<120) { fx+=wp.weight*dx/d; fy+=wp.weight*dy/d; count++; }
+  }
+  const mag=Math.sqrt(fx*fx+fy*fy);
+  return mag<0.01 ? [0,0] : [fx/mag*boid.maxSpeed*0.7-boid.vx, fy/mag*boid.maxSpeed*0.7-boid.vy];
+}
 function cohesion(boid) {
   let cx=0,cy=0,count=0;
   for (const other of boids) { if(other===boid)continue; const d=boid.distTo(other); if(d>0&&d<CONFIG.BOID_PERCEPTION){cx+=other.x;cy+=other.y;count++;} }
@@ -342,9 +363,10 @@ function update(dt) {
     const [aliX,aliY]=alignment(boid);
     const [avoX,avoY]=obstacleAvoidance(boid);
     const [bndX,bndY]=boundsSteering(boid);
+    const [wpX,wpY]=waypointSteer(boid);
     boid.applyForce(
-      cohX*cohesionWeight+sepX*separationWeight+aliX*alignmentWeight+avoX*avoidWeight+bndX,
-      cohY*cohesionWeight+sepY*separationWeight+aliY*alignmentWeight+avoY*avoidWeight+bndY,
+      cohX*cohesionWeight+sepX*separationWeight+aliX*alignmentWeight+avoX*avoidWeight+bndX+wpX,
+      cohY*cohesionWeight+sepY*separationWeight+aliY*alignmentWeight+avoY*avoidWeight+bndY+wpY,
       dt
     );
     boid.update(dt);
@@ -359,6 +381,22 @@ function render() {
     const alpha=0.3+Math.sin(star.twinkle)*0.2;
     ctx.save(); ctx.globalAlpha=alpha; ctx.fillStyle='#c0c0e0';
     ctx.beginPath(); ctx.arc(star.x,star.y,star.r,0,Math.PI*2); ctx.fill(); ctx.restore();
+  }
+  // Waypoints
+  for (const wp of waypoints) {
+    ctx.save();
+    ctx.fillStyle='#ffcc44';
+    ctx.beginPath(); ctx.arc(wp.x,wp.y,4,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle='rgba(255,204,68,0.2)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.arc(wp.x,wp.y,10,0,Math.PI*2); ctx.stroke();
+    ctx.restore();
+  }
+  if (waypoints.length>1) {
+    ctx.strokeStyle='rgba(255,204,68,0.15)'; ctx.lineWidth=1.5;
+    ctx.setLineDash([4,4]);
+    ctx.beginPath(); ctx.moveTo(waypoints[0].x,waypoints[0].y);
+    for (let i=1;i<waypoints.length;i++) ctx.lineTo(waypoints[i].x,waypoints[i].y);
+    ctx.stroke(); ctx.setLineDash([]);
   }
   // Obstacles
   for (const obs of obstacles) obs.render(ctx);
@@ -387,6 +425,7 @@ function render() {
   ctx.fillStyle='#ff6b6b'; ctx.fillText(`SEP ${separationWeight.toFixed(2)}`,114,38);
   ctx.fillStyle='#ffd93d'; ctx.fillText(`ALI ${alignmentWeight.toFixed(2)}`,214,38);
   ctx.fillStyle='#a78bfa'; ctx.fillText(`AVO ${avoidWeight.toFixed(2)}`,314,38);
+  ctx.fillStyle='#ffcc44'; ctx.fillText(`WPT ${waypointWeight.toFixed(1)}`,414,38);
   // Vignette
   const vig=ctx.createRadialGradient(w/2,h/2,h*0.3,w/2,h/2,h*0.7);
   vig.addColorStop(0,'rgba(0,0,0,0)'); vig.addColorStop(1,'rgba(0,0,0,0.3)');
@@ -410,6 +449,7 @@ s('cohesionSlider').addEventListener('input', e => { cohesionWeight=parseFloat(e
 s('separationSlider').addEventListener('input', e => { separationWeight=parseFloat(e.target.value)/100; s('separationVal').textContent=separationWeight.toFixed(2); });
 s('alignmentSlider').addEventListener('input', e => { alignmentWeight=parseFloat(e.target.value)/100; s('alignmentVal').textContent=alignmentWeight.toFixed(2); });
 s('avoidSlider').addEventListener('input', e => { avoidWeight=parseFloat(e.target.value)/100; s('avoidVal').textContent=avoidWeight.toFixed(2); });
+s('waypointSlider').addEventListener('input', e => { waypointWeight=parseFloat(e.target.value)/100; s('waypointVal').textContent=waypointWeight.toFixed(1); });
 s('resetBtn').addEventListener('click', ()=>{ boids=[]; obstacles=[]; spawnBoids(CONFIG.INITIAL_BOID_COUNT); });
 s('clearObstaclesBtn').addEventListener('click', ()=>{ obstacles=[]; });
 s('addBoidBtn').addEventListener('click', ()=>{ if(boids.length<CONFIG.MAX_BOIDS) spawnBoids(1); });
@@ -418,6 +458,8 @@ s('removeBoidBtn').addEventListener('click', ()=>{ if(boids.length>CONFIG.MIN_BO
 window.addEventListener('keydown', e => {
   if (e.code==='KeyN') showNeighbors=!showNeighbors;
   if (e.code==='KeyT') boidTrails=!boidTrails;
+  if (e.code==='KeyW') { isWaypointMode=!isWaypointMode; canvas.style.cursor=isWaypointMode?'cell':'crosshair'; }
+  if (e.code==='KeyX') { waypoints=[]; }
 });
 
 // ─── Canvas Input ───
@@ -426,6 +468,10 @@ canvas.addEventListener('mousedown', e => {
   const rect=canvas.getBoundingClientRect();
   const scaleX=canvas.width/rect.width, scaleY=canvas.height/rect.height;
   const mx=(e.clientX-rect.left)*scaleX, my=(e.clientY-rect.top)*scaleY;
+  if (isWaypointMode) {
+    waypoints.push({x:mx, y:my, weight:1});
+    return;
+  }
   for (const obs of obstacles) if(obs.contains(mx,my)) return;
   obstacles.push(new Obstacle(mx,my));
 });
