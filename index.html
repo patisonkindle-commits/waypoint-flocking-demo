@@ -299,14 +299,20 @@ spawnBoids(CONFIG.INITIAL_BOID_COUNT);
 
 // ─── Steering Behaviors ───
 function waypointSteer(boid) {
-  if (!waypointWeight) return [0,0];
-  let fx=0,fy=0,count=0;
+  if (!waypointWeight || !waypoints.length) return [0,0];
+  // find nearest waypoint
+  let nearest=null, nearDist=Infinity;
   for (const wp of waypoints) {
     const dx=wp.x-boid.x, dy=wp.y-boid.y, d=Math.sqrt(dx*dx+dy*dy);
-    if (d>0 && d<120) { fx+=wp.weight*dx/d; fy+=wp.weight*dy/d; count++; }
+    if (d<nearDist) { nearDist=d; nearest=wp; }
   }
-  const mag=Math.sqrt(fx*fx+fy*fy);
-  return mag<0.01 ? [0,0] : [fx/mag*boid.maxSpeed*0.7-boid.vx, fy/mag*boid.maxSpeed*0.7-boid.vy];
+  if (!nearest) return [0,0];
+  const dx=nearest.x-boid.x, dy=nearest.y-boid.y, d=Math.sqrt(dx*dx+dy*dy);
+  if (d<10) return [0,0];
+  // steer toward it
+  const fx=dx/d*boid.maxSpeed*0.7-boid.vx;
+  const fy=dy/d*boid.maxSpeed*0.7-boid.vy;
+  return [fx, fy];
 }
 function cohesion(boid) {
   let cx=0,cy=0,count=0;
