@@ -301,19 +301,23 @@ spawnBoids(CONFIG.INITIAL_BOID_COUNT);
 // ─── Steering Behaviors ───
 function waypointSteer(boid) {
   if (!waypointWeight || !waypoints.length) return [0,0];
-  // find next unvisited waypoint (shared across all boids)
   const wp = waypoints.find(w => !w.visited);
   if (!wp) return [0,0];
   const dx = wp.x-boid.x, dy = wp.y-boid.y, d = Math.sqrt(dx*dx+dy*dy);
-  // check if ALL boids have reached this waypoint
-  const allReached = boids.every(b => {
-    const dd = Math.sqrt((b.x-wp.x)**2+(b.y-wp.y)**2);
-    return dd < 20;
-  });
-  if (allReached) {
-    wp.visited = true;
-    return [0,0];
+  
+  // check if ALL boids are within 20px of this waypoint
+  const near = boids.filter(b => Math.sqrt((b.x-wp.x)**2+(b.y-wp.y)**2) < 20).length;
+  if (near >= boids.length) {
+    wp.dwellCount = (wp.dwellCount || 0) + 1;
+    if (wp.dwellCount >= 30) { // ~0.5s at 60fps
+      wp.visited = true;
+      wp.dwellCount = 0;
+      return [0,0];
+    }
+  } else {
+    wp.dwellCount = 0;
   }
+  
   // steer toward it
   const fx = dx/d*boid.maxSpeed*0.7 - boid.vx;
   const fy = dy/d*boid.maxSpeed*0.7 - boid.vy;
@@ -397,9 +401,14 @@ function render() {
   for (let i=0;i<waypoints.length;i++) {
     const wp=waypoints[i];
     ctx.save();
-    ctx.fillStyle='#ffcc44';
+    if (wp.visited) {
+      ctx.globalAlpha=0.15;
+      ctx.fillStyle='#ffcc44';
+    } else {
+      ctx.fillStyle='#ffcc44';
+    }
     ctx.beginPath(); ctx.arc(wp.x,wp.y,6,0,Math.PI*2); ctx.fill();
-    ctx.strokeStyle='rgba(255,204,68,0.25)'; ctx.lineWidth=1;
+    ctx.globalAlpha=wp.visited ? 0.08 : 0.25; ctx.lineWidth=1;
     ctx.beginPath(); ctx.arc(wp.x,wp.y,12,0,Math.PI*2); ctx.stroke();
     // number
     ctx.fillStyle='#0f0f1a'; ctx.font='bold 8px monospace'; ctx.textAlign='center'; ctx.textBaseline='middle';
