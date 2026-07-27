@@ -305,11 +305,14 @@ function waypointSteer(boid) {
   if (!wp) return [0,0];
   const dx = wp.x-boid.x, dy = wp.y-boid.y, d = Math.sqrt(dx*dx+dy*dy);
   
-  // check if ALL boids are within 20px of this waypoint
-  const near = boids.filter(b => Math.sqrt((b.x-wp.x)**2+(b.y-wp.y)**2) < 20).length;
-  if (near >= boids.length) {
+  // check centroid of all boids is near waypoint (no straggler trashing)
+  let cx=0, cy=0;
+  for (const b of boids) { cx+=b.x; cy+=b.y; }
+  cx/=boids.length; cy/=boids.length;
+  const centroidDist = Math.sqrt((cx-wp.x)**2+(cy-wp.y)**2);
+  if (centroidDist < 30) {
     wp.dwellCount = (wp.dwellCount || 0) + 1;
-    if (wp.dwellCount >= 30) { // ~0.5s at 60fps
+    if (wp.dwellCount >= 60) { // ~1s dwell
       wp.visited = true;
       wp.dwellCount = 0;
       return [0,0];
@@ -319,8 +322,8 @@ function waypointSteer(boid) {
   }
   
   // steer toward it
-  const fx = dx/d*boid.maxSpeed*0.7 - boid.vx;
-  const fy = dy/d*boid.maxSpeed*0.7 - boid.vy;
+  const fx = dx/d*boid.maxSpeed*0.9 - boid.vx;
+  const fy = dy/d*boid.maxSpeed*0.9 - boid.vy;
   return [fx, fy];
 }
 function cohesion(boid) {
