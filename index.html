@@ -301,13 +301,17 @@ spawnBoids(CONFIG.INITIAL_BOID_COUNT);
 // ─── Steering Behaviors ───
 function waypointSteer(boid) {
   if (!waypointWeight || !waypoints.length) return [0,0];
-  // find which waypoint this boid is heading to
-  const idx = boid.wpIndex % waypoints.length;
-  const wp = waypoints[idx];
+  // find next unvisited waypoint (shared across all boids)
+  const wp = waypoints.find(w => !w.visited);
+  if (!wp) return [0,0];
   const dx = wp.x-boid.x, dy = wp.y-boid.y, d = Math.sqrt(dx*dx+dy*dy);
-  // reached waypoint → advance to next
-  if (d < 15) {
-    boid.wpIndex = (boid.wpIndex + 1) % waypoints.length;
+  // check if ALL boids have reached this waypoint
+  const allReached = boids.every(b => {
+    const dd = Math.sqrt((b.x-wp.x)**2+(b.y-wp.y)**2);
+    return dd < 20;
+  });
+  if (allReached) {
+    wp.visited = true;
     return [0,0];
   }
   // steer toward it
@@ -480,7 +484,7 @@ canvas.addEventListener('mousedown', e => {
   const scaleX=canvas.width/rect.width, scaleY=canvas.height/rect.height;
   const mx=(e.clientX-rect.left)*scaleX, my=(e.clientY-rect.top)*scaleY;
   if (isWaypointMode) {
-    waypoints.push({x:mx, y:my, weight:1});
+    waypoints.push({x:mx, y:my, weight:1, visited: false});
     return;
   }
   for (const obs of obstacles) if(obs.contains(mx,my)) return;
